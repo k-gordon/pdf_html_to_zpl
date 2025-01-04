@@ -99,13 +99,10 @@ class DocumentToZPL:
         zpl.append('^XZ')  # End ZPL format
         return '\n'.join(filter(None, zpl))
 
-    def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
-        """
-        Convert PDF content to ZPL format with table and formatting preservation.
-        """
+        def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
+        """Convert PDF content to ZPL format."""
         zpl = ['^XA']  # Start ZPL format
         current_y = self.options['start_y']
-        table_border = True  # Enable table borders
         
         try:
             # Handle different input types
@@ -122,98 +119,22 @@ class DocumentToZPL:
             pdf_reader = PyPDF2.PdfReader(pdf_file)
             
             # Process each page
-            for page_num, page in enumerate(pdf_reader.pages):
-                if page_num > 0:
-                    # Add page separator
-                    current_y += self.pixels_to_dots(20)  # Add space between pages
+            for page in pdf_reader.pages:
+                # Extract text
+                text = page.extract_text()
                 
-                # Get page layout
-                layout = page.extract_text(layout=True)
-                
-                # Process tables if present
-                tables = page.find_tables()
-                if tables:
-                    for table in tables:
-                        # Table header
-                        if table_border:
-                            zpl.extend([
-                                f'^FO{self.options["start_x"]},{current_y}',
-                                '^GB750,2,2^FS'  # Horizontal line
-                            ])
-                        
-                        current_y += self.pixels_to_dots(5)
-                        
-                        # Process table headers
-                        col_widths = table.column_widths()
-                        x_pos = self.options["start_x"]
-                        
-                        for col_num, header in enumerate(table.headers):
-                            width = self.pixels_to_dots(col_widths[col_num])
-                            zpl.extend([
-                                f'^FO{x_pos},{current_y}',
-                                f'^A0,{self.pixels_to_dots(10)}',  # Slightly larger font for headers
-                                '^FB' if table_border else '',  # Bold for headers
-                                f'^FD{self.escape_zpl(header.strip())}^FS'
-                            ])
-                            x_pos += width + self.pixels_to_dots(10)  # Add padding
-                        
-                        current_y += self.pixels_to_dots(15)
-                        
-                        # Table rows
-                        for row in table.rows:
-                            x_pos = self.options["start_x"]
-                            max_height = 0
-                            
-                            for col_num, cell in enumerate(row):
-                                width = self.pixels_to_dots(col_widths[col_num])
-                                cell_text = cell.strip()
-                                
-                                # Handle multi-line cells
-                                lines = cell_text.split('\n')
-                                line_height = self.pixels_to_dots(10)  # Base height for text
-                                total_height = line_height * len(lines)
-                                max_height = max(max_height, total_height)
-                                
-                                for line in lines:
-                                    zpl.extend([
-                                        f'^FO{x_pos},{current_y}',
-                                        f'^A0,{self.pixels_to_dots(8)}',  # Normal font size for cell content
-                                        f'^FB{width},{len(lines)},0,L,0',  # Field block for text wrapping
-                                        f'^FD{self.escape_zpl(line)}^FS'
-                                    ])
-                                    current_y += line_height
-                                
-                                current_y -= total_height  # Reset Y position for next cell
-                                x_pos += width + self.pixels_to_dots(10)  # Add padding
-                            
-                            current_y += max_height + self.pixels_to_dots(5)  # Move to next row
-                            
-                            # Add row separator
-                            if table_border:
-                                zpl.extend([
-                                    f'^FO{self.options["start_x"]},{current_y}',
-                                    '^GB750,1,1^FS'  # Thinner horizontal line for row separator
-                                ])
-                        
-                        current_y += self.pixels_to_dots(10)  # Space after table
-                
-                # Process regular text with formatting
-                for text_obj in layout:
-                    if isinstance(text_obj, str) and text_obj.strip():
-                        # Detect formatting
-                        font_size = text_obj.font.size if hasattr(text_obj, 'font') else self.options['font_size']
-                        is_bold = text_obj.font.is_bold if hasattr(text_obj, 'font') else False
-                        
-                        # Convert formatting to ZPL
-                        font_size_dots = self.pixels_to_dots(font_size)
-                        
+                # Process each line
+                for line in text.split('\n'):
+                    if line.strip():
+                        # Add text field with default font size
+                        font_size_dots = self.pixels_to_dots(self.options['font_size'])
                         zpl.extend([
-                            f'^FO{self.options["start_x"]},{current_y}',
-                            f'^A0,{font_size_dots}',
-                            '^FB' if is_bold else '',
-                            f'^FD{self.escape_zpl(text_obj.strip())}^FS'
+                            f'^FO{self.options["start_x"]},{current_y}',  # Field Origin
+                            f'^A0,{font_size_dots}',  # Font selection
+                            f'^FD{self.escape_zpl(line.strip())}^FS'  # Field Data and Separator
                         ])
                         
+                        # Update vertical position
                         current_y += int(font_size_dots * 1.5)  # Add line spacing
             
             if isinstance(pdf_data, str):
