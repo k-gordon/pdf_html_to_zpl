@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: zpl-converter
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: MAX_UPLOAD_SIZE
+        value: 10485760
