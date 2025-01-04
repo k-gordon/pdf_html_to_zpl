@@ -1,20 +1,15 @@
 import os
+import base64
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Union
+from typing import Optional, Dict
 import uvicorn
-from bs4 import BeautifulSoup
-from io import BytesIO
-import html
 import logging
 from datetime import datetime
 import json
-from PIL import Image
-from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTTextBox, LTText, LTChar, LTAnno
-import zpl
+from zebrafy import ZebrafyPDF, ZebrafyImage
 
 # Setup logging
 logging.basicConfig(
@@ -26,154 +21,10 @@ logger = logging.getLogger(__name__)
 # Get environment variables
 MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB default
 
-class DocumentToZPL:
-    def __init__(self, options: Optional[Dict] = None):
-        self.default_options = {
-            'label_width': 100,  # mm
-            'label_height': 60,  # mm
-            'char_height': 10,   # Default character height
-            'char_width': 8,     # Default character width
-            'line_width': 60,    # Default line width
-            'justification': 'L'  # L, C, R for Left, Center, Right
-        }
-        self.options = {**self.default_options, **(options or {})}
-        
-    def html_to_zpl(self, html_content: str) -> str:
-        """Convert HTML content to ZPL format"""
-        # Create a new label with specified dimensions
-        label = zpl.Label(self.options['label_width'], self.options['label_height'])
-        current_height = 0
-        
-        # Parse HTML
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Process text elements
-        for element in soup.find_all(text=True):
-            if element.strip():
-                parent = element.parent
-                char_height, char_width = self._get_text_dimensions(parent)
-                justification = self._get_justification(parent)
-                
-                # Add text to label
-                label.origin(0, current_height)
-                label.write_text(
-                    element.strip(),
-                    char_height=char_height,
-                    char_width=char_width,
-                    line_width=self.options['line_width'],
-                    justification=justification
-                )
-                label.endorigin()
-                
-                # Update height for next element
-                current_height += char_height + 2  # Add some spacing
-        
-        return label.dumpZPL()
-
-    def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
-        """Convert PDF to ZPL format with layout preservation"""
-        try:
-            # Create a new label
-            label = zpl.Label(self.options['label_width'], self.options['label_height'])
-            current_height = 0
-            
-            # Create a temporary file if needed
-            if isinstance(pdf_data, (bytes, BytesIO)):
-                temp_file = BytesIO(pdf_data if isinstance(pdf_data, bytes) else pdf_data.getvalue())
-            else:
-                temp_file = pdf_data
-
-            # Extract pages with layout
-            for page_layout in extract_pages(temp_file):
-                for element in page_layout:
-                    if isinstance(element, LTTextBox):
-                        text = element.get_text().strip()
-                        if not text:
-                            continue
-                        
-                        # Calculate relative position
-                        x_pos = int(element.x0 * self.options['label_width'] / page_layout.width)
-                        y_pos = current_height + int(element.y0 * self.options['label_height'] / page_layout.height)
-                        
-                        # Get font properties
-                        char_height = int(element.height * 10 / page_layout.height)
-                        char_width = int(char_height * 0.8)  # Approximate width
-                        
-                        # Add text to label
-                        label.origin(x_pos, y_pos)
-                        label.write_text(
-                            text,
-                            char_height=max(5, char_height),  # Ensure minimum size
-                            char_width=max(4, char_width),
-                            line_width=self.options['line_width']
-                        )
-                        label.endorigin()
-                        
-                        # Update height
-                        current_height = max(current_height, y_pos + char_height + 5)
-            
-            return label.dumpZPL()
-                
-        except Exception as e:
-            raise Exception(f"Error converting PDF to ZPL: {str(e)}")
-
-    def add_barcode(self, data: str, barcode_type: str = "128", x: Optional[int] = None, y: Optional[int] = None) -> str:
-        """Generate ZPL barcode"""
-        # Create a new label
-        label = zpl.Label(self.options['label_width'], self.options['label_height'])
-        
-        # Set position
-        x = x if x is not None else 10
-        y = y if y is not None else 10
-        
-        label.origin(x, y)
-        
-        # Map barcode types to zpl library format
-        barcode_types = {
-            'CODE128': '128',
-            'CODE39': '3',
-            'QR': 'Q',
-            'EAN13': 'E',
-            'UPC': 'U'
-        }
-        
-        bc_type = barcode_types.get(barcode_type.upper(), '128')
-        
-        if bc_type == 'Q':  # QR Code
-            label.barcode(bc_type, data, magnification=5)
-        elif bc_type == 'U':  # UPC
-            label.barcode(bc_type, data, height=70, check_digit='Y')
-        else:  # Other barcodes
-            label.barcode(bc_type, data, height=60)
-            
-        label.endorigin()
-        
-        return label.dumpZPL()
-
-    def _get_text_dimensions(self, element) -> tuple:
-        """Get text dimensions based on HTML element"""
-        base_height = self.options['char_height']
-        base_width = self.options['char_width']
-        
-        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-            heading_level = int(element.name[1])
-            multiplier = 2.5 - (heading_level * 0.3)
-            return (int(base_height * multiplier), int(base_width * multiplier))
-        return (base_height, base_width)
-
-    def _get_justification(self, element) -> str:
-        """Get text justification based on HTML element"""
-        style = element.get('style', '')
-        if 'text-align: center' in style:
-            return 'C'
-        elif 'text-align: right' in style:
-            return 'R'
-        return 'L'  # Default left alignment
-
 # FastAPI app initialization
 app = FastAPI(
     title="ZPL Converter API",
-    description="API for converting HTML and PDF documents to ZPL format",
+    description="API for converting HTML and PDF documents to ZPL format using Zebrafy",
     version="1.0.0"
 )
 
@@ -191,22 +42,23 @@ app.add_middleware(
 )
 
 class ConversionOptions(BaseModel):
-    label_width: Optional[float] = Field(100, description="Label width in mm")
-    label_height: Optional[float] = Field(60, description="Label height in mm")
-    char_height: Optional[int] = Field(10, description="Character height")
-    char_width: Optional[int] = Field(8, description="Character width")
-    line_width: Optional[int] = Field(60, description="Line width")
-    justification: Optional[str] = Field('L', description="Text justification (L, C, R)")
+    format: str = Field("ASCII", description="ZPL format type (ASCII, B64, or Z64)")
+    invert: bool = Field(False, description="Invert black and white")
+    dither: bool = Field(True, description="Use dithering")
+    threshold: int = Field(128, description="Black pixel threshold (0-255)")
+    width: int = Field(0, description="Output width (0 for original)")
+    height: int = Field(0, description="Output height (0 for original)")
+    pos_x: int = Field(0, description="X position")
+    pos_y: int = Field(0, description="Y position")
+    rotation: int = Field(0, description="Rotation (0, 90, 180, or 270)")
+    string_line_break: Optional[int] = Field(None, description="Characters per line")
+    complete_zpl: bool = Field(True, description="Include ZPL header/footer")
+    dpi: int = Field(72, description="PDF DPI (PDF only)")
+    split_pages: bool = Field(False, description="Split PDF pages (PDF only)")
 
-class HTMLRequest(BaseModel):
-    html_content: str = Field(..., description="HTML content to convert")
-    options: Optional[ConversionOptions] = None
-
-class BarcodeRequest(BaseModel):
-    data: str = Field(..., description="Data to encode in barcode")
-    barcode_type: str = Field("CODE128", description="Type of barcode")
-    x: Optional[int] = None
-    y: Optional[int] = None
+class Base64Request(BaseModel):
+    file_content: str = Field(..., description="Base64 encoded file content")
+    file_type: str = Field(..., description="File type (pdf or image)")
     options: Optional[ConversionOptions] = None
 
 @app.middleware("http")
@@ -256,13 +108,30 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
-@app.post("/convert/html")
-async def convert_html(request: HTMLRequest):
-    """Convert HTML to ZPL format"""
+@app.post("/convert/base64")
+async def convert_base64(request: Base64Request):
+    """Convert base64 encoded PDF or image to ZPL"""
     try:
-        logger.info("Processing HTML to ZPL conversion request")
-        converter = DocumentToZPL(request.options.dict() if request.options else None)
-        zpl_output = converter.html_to_zpl(request.html_content)
+        logger.info(f"Processing {request.file_type} to ZPL conversion request")
+        
+        # Decode base64 content
+        try:
+            file_content = base64.b64decode(request.file_content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Invalid base64 content")
+            
+        # Prepare options
+        options = request.options.dict() if request.options else {}
+        
+        # Convert based on file type
+        if request.file_type.lower() == 'pdf':
+            converter = ZebrafyPDF(file_content, **options)
+        elif request.file_type.lower() in ['image', 'png', 'jpg', 'jpeg']:
+            converter = ZebrafyImage(file_content, **options)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+            
+        zpl_output = converter.to_zpl()
         
         return {
             "status": "success",
@@ -270,35 +139,42 @@ async def convert_html(request: HTMLRequest):
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Error in HTML conversion: {str(e)}")
+        logger.error(f"Error in conversion: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/convert/pdf")
-async def convert_pdf(
+@app.post("/convert/file")
+async def convert_file(
     file: UploadFile = File(...),
     options: str = Form(None)
 ):
-    """Convert PDF to ZPL format"""
+    """Convert uploaded file (PDF or image) to ZPL"""
     try:
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="File must be a PDF")
+        # Check file type
+        file_ext = file.filename.lower().split('.')[-1]
+        if file_ext not in ['pdf', 'png', 'jpg', 'jpeg']:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        logger.info(f"Processing PDF to ZPL conversion request for file: {file.filename}")
+        logger.info(f"Processing file to ZPL conversion request for file: {file.filename}")
         contents = await file.read()
         
         if len(contents) > MAX_UPLOAD_SIZE:
             raise HTTPException(status_code=413, detail="File too large")
         
         # Parse options if provided
-        options_dict = None
+        conv_options = {}
         if options:
             try:
-                options_dict = json.loads(options)
+                conv_options = json.loads(options)
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid options format")
             
-        converter = DocumentToZPL(options_dict)
-        zpl_output = converter.pdf_to_zpl(BytesIO(contents))
+        # Convert based on file type
+        if file_ext == 'pdf':
+            converter = ZebrafyPDF(contents, **conv_options)
+        else:
+            converter = ZebrafyImage(contents, **conv_options)
+            
+        zpl_output = converter.to_zpl()
         
         return {
             "status": "success",
@@ -306,29 +182,7 @@ async def convert_pdf(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Error in PDF conversion: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/generate/barcode")
-async def generate_barcode(request: BarcodeRequest):
-    """Generate ZPL barcode"""
-    try:
-        logger.info("Processing barcode generation request")
-        converter = DocumentToZPL(request.options.dict() if request.options else None)
-        zpl_output = converter.add_barcode(
-            data=request.data,
-            barcode_type=request.barcode_type,
-            x=request.x,
-            y=request.y
-        )
-        
-        return {
-            "status": "success",
-            "zpl_content": zpl_output,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error in barcode generation: {str(e)}")
+        logger.error(f"Error in conversion: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
