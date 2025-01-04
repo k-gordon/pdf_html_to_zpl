@@ -3,7 +3,8 @@ uvicorn==0.24.0
 gunicorn==21.2.0
 python-multipart==0.0.6
 beautifulsoup4==4.12.2
-pdf2zpl==1.1.0
+pdfminer.six==20221105
+python-zpl2==1.0.3
 Pillow==10.0.0
 pydantic==2.5.2
 python-dotenv==1.0.0
