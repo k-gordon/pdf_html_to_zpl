@@ -99,7 +99,7 @@ class DocumentToZPL:
         zpl.append('^XZ')  # End ZPL format
         return '\n'.join(filter(None, zpl))
 
-        def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
+    def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
         """Convert PDF content to ZPL format."""
         zpl = ['^XA']  # Start ZPL format
         current_y = self.options['start_y']
