@@ -12,6 +12,8 @@ import re
 import html
 import logging
 from datetime import datetime
+import json
+from fastapi import Form
 
 # Setup logging
 logging.basicConfig(
@@ -346,7 +348,7 @@ async def convert_html(request: HTMLRequest):
 @app.post("/convert/pdf")
 async def convert_pdf(
     file: UploadFile = File(...),
-    options: Optional[Dict] = Body(None)
+    options: str = Form(None)  # Changed from Body to Form, and type to str
 ):
     """Convert PDF to ZPL format"""
     try:
@@ -358,8 +360,16 @@ async def convert_pdf(
         
         if len(contents) > MAX_UPLOAD_SIZE:
             raise HTTPException(status_code=413, detail="File too large")
+        
+        # Parse options if provided
+        options_dict = None
+        if options:
+            try:
+                options_dict = json.loads(options)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid options format")
             
-        converter = DocumentToZPL(options)
+        converter = DocumentToZPL(options_dict)
         zpl_output = converter.pdf_to_zpl(BytesIO(contents))
         
         return {
