@@ -6,13 +6,15 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Union
 import uvicorn
 from bs4 import BeautifulSoup
-from io import BytesIO
+from io import BytesIO, StringIO
 import html
 import logging
 from datetime import datetime
 import json
-from pdf2zpl import PDFtoZPL
 from PIL import Image
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTTextBox, LTText, LTChar, LTAnno
+from zpl2 import Label
 
 # Setup logging
 logging.basicConfig(
@@ -34,22 +36,14 @@ class DocumentToZPL:
             'start_x': 50,
             'start_y': 50,
             'rotation': 0,     # 0, 90, 180, or 270 degrees
-            'dither': True,    # Better handling of images
-            'compression': True # ZPL compression
         }
         self.options = {**self.default_options, **(options or {})}
-        self.pdf_converter = PDFtoZPL(
-            label_width=self.options['label_width'],
-            label_height=self.options['label_height'],
-            dpmm=self.options['density'],
-            rotate=self.options['rotation'],
-            dither=self.options['dither'],
-            compression=self.options['compression']
-        )
+        self.dpmm = self.options['density']
+        self.dpi = self.dpmm * 25.4
 
     def html_to_zpl(self, html_content: str) -> str:
         """Convert HTML content to ZPL format"""
-        zpl = ['^XA']  # Start ZPL format
+        zpl = Label(self.options['density'])
         current_y = self.options['start_y']
         
         # Parse HTML
@@ -63,47 +57,67 @@ class DocumentToZPL:
                 is_bold = self._is_bold(parent)
                 
                 # Add text field
-                zpl.extend([
-                    f'^FO{self.options["start_x"]},{current_y}',
-                    f'^A0,{font_size}',
-                    '^FB' if is_bold else '',
-                    f'^FD{self.escape_zpl(element.string.strip())}^FS'
-                ])
+                zpl.origin(self.options['start_x'], current_y)
+                zpl.write_text(element.string.strip(), font_size, is_bold)
                 
                 current_y += int(font_size * 1.5)
         
-        zpl.append('^XZ')
-        return '\n'.join(filter(None, zpl))
+        return str(zpl)
 
     def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
-        """Convert PDF to ZPL format with full layout preservation"""
+        """Convert PDF to ZPL format with layout preservation"""
         try:
-            # Create a temporary directory if it doesn't exist
-            temp_dir = '/tmp'
-            if not os.path.exists(temp_dir):
-                os.makedirs(temp_dir)
+            # Create a Label instance
+            label = Label(self.options['density'])
+            current_y = self.options['start_y']
             
-            temp_path = os.path.join(temp_dir, 'temp.pdf')
-            
-            # Handle different input types
-            if isinstance(pdf_data, str):
-                return self.pdf_converter.convert(pdf_data)
+            # Create a temporary file if needed
+            if isinstance(pdf_data, (bytes, BytesIO)):
+                temp_file = BytesIO(pdf_data if isinstance(pdf_data, bytes) else pdf_data.getvalue())
             else:
-                # For bytes or BytesIO, save to temporary file
-                if isinstance(pdf_data, BytesIO):
-                    pdf_data = pdf_data.getvalue()
+                temp_file = pdf_data
+
+            # Extract pages with layout
+            for page_layout in extract_pages(temp_file):
+                max_y = 0
                 
-                with open(temp_path, 'wb') as f:
-                    f.write(pdf_data)
+                # Process each element in the page
+                for element in page_layout:
+                    if isinstance(element, LTTextBox):
+                        # Get text and its properties
+                        text = element.get_text().strip()
+                        if not text:
+                            continue
+                            
+                        # Calculate position
+                        x = int(element.x0 * self.dpmm)
+                        y = int(element.y0 * self.dpmm)
+                        
+                        # Get font properties
+                        font_size = self.options['font_size']
+                        is_bold = False
+                        
+                        for text_line in element:
+                            if isinstance(text_line, LTText):
+                                for character in text_line:
+                                    if isinstance(character, LTChar):
+                                        font_name = character.fontname
+                                        font_size = int(character.size * self.dpmm)
+                                        is_bold = 'Bold' in font_name or 'bold' in font_name
+                                        break
+                        
+                        # Add text to label
+                        label.origin(x + self.options['start_x'], y + self.options['start_y'])
+                        label.write_text(text, font_size, is_bold)
+                        
+                        # Update maximum y position
+                        max_y = max(max_y, y + self.options['start_y'] + font_size)
                 
-                try:
-                    zpl = self.pdf_converter.convert(temp_path)
-                finally:
-                    # Clean up
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                
-                return zpl
+                # Add page separator if not the last page
+                if max_y > current_y:
+                    current_y = max_y + self.pixels_to_dots(20)
+            
+            return str(label)
                 
         except Exception as e:
             raise Exception(f"Error converting PDF to ZPL: {str(e)}")
@@ -113,18 +127,21 @@ class DocumentToZPL:
         x = x if x is not None else self.options['start_x']
         y = y if y is not None else self.options['start_y']
         
-        barcode_commands = {
-            'CODE128': '^BC',
-            'CODE39': '^B3',
-            'QR': '^BQ',
-            'EAN13': '^BE',
-            'UPC': '^BU',
-            'DATAMATRIX': '^BX'
-        }
+        label = Label(self.options['density'])
+        label.origin(x, y)
         
-        command = barcode_commands.get(barcode_type.upper(), '^BC')
+        if barcode_type.upper() == 'QR':
+            label.qr_code(data)
+        elif barcode_type.upper() == 'CODE39':
+            label.barcode('3', data)
+        elif barcode_type.upper() == 'EAN13':
+            label.barcode('E', data)
+        elif barcode_type.upper() == 'UPC':
+            label.barcode('U', data)
+        else:  # Default to CODE128
+            label.barcode('B', data)
         
-        return f'^XA\n^FO{x},{y}\n{command}\n^FD{self.escape_zpl(data)}^FS\n^XZ'
+        return str(label)
 
     def _get_font_size(self, element) -> int:
         """Get font size based on HTML element"""
@@ -138,20 +155,9 @@ class DocumentToZPL:
         """Check if element should be bold"""
         return element.name in ['strong', 'b'] or 'font-weight: bold' in element.get('style', '')
 
-    def escape_zpl(self, text: str) -> str:
-        """Escape special characters in ZPL"""
-        text = html.unescape(text)
-        escapes = {
-            '\\': '\\\\',
-            '^': '\\^',
-            '~': '\\~',
-            ',': '\\,',
-            ':': '\\:',
-            '"': '\\"'
-        }
-        for char, escape in escapes.items():
-            text = text.replace(char, escape)
-        return text
+    def pixels_to_dots(self, pixels: float) -> int:
+        """Convert pixels to printer dots based on density."""
+        return round((pixels / 96) * self.dpi)
 
 # FastAPI app initialization
 app = FastAPI(
