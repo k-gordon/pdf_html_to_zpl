@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union
 import uvicorn
 from bs4 import BeautifulSoup
 import PyPDF2
@@ -13,7 +13,15 @@ import html
 import logging
 from datetime import datetime
 
-# [Previous imports remain the same]
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Get environment variables
+MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB default
 
 class DocumentToZPL:
     def __init__(self, options: Optional[Dict] = None):
@@ -153,35 +161,6 @@ class DocumentToZPL:
         
         return f'^XA\n^FO{x},{y}\n{command}\n^FD{self.escape_zpl(data)}^FS\n^XZ'
 
-# [Rest of the FastAPI code remains the same]
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Get environment variables
-MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB default
-
-class DocumentToZPL:
-    def __init__(self, options: Optional[Dict] = None):
-        self.default_options = {
-            'label_width': 4,
-            'label_height': 6,
-            'density': 8,
-            'font_size': 10,
-            'start_x': 50,
-            'start_y': 50
-        }
-        self.options = {**self.default_options, **(options or {})}
-        self.dpmm = self.options['density']
-        self.dpi = self.dpmm * 25.4
-
-    # [Previous DocumentToZPL methods go here]
-    # Copy all the methods from the previous implementation
-
 # FastAPI app initialization
 app = FastAPI(
     title="ZPL Converter API",
@@ -189,7 +168,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Add CORS middleware with more restrictive settings
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
