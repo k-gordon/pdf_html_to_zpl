@@ -1,19 +1,18 @@
 import os
-from fastapi import FastAPI, HTTPException, File, UploadFile, Body
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Union
 import uvicorn
 from bs4 import BeautifulSoup
-import PyPDF2
 from io import BytesIO
-import re
 import html
 import logging
 from datetime import datetime
 import json
-from fastapi import Form
+from pdf2zpl import PDFtoZPL
+from PIL import Image
 
 # Setup logging
 logging.basicConfig(
@@ -28,23 +27,119 @@ MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB de
 class DocumentToZPL:
     def __init__(self, options: Optional[Dict] = None):
         self.default_options = {
-            'label_width': 4,
-            'label_height': 6,
-            'density': 8,
+            'label_width': 4,  # inches
+            'label_height': 6,  # inches
+            'density': 8,      # dots/mm (203 dpi)
             'font_size': 10,
             'start_x': 50,
-            'start_y': 50
+            'start_y': 50,
+            'rotation': 0,     # 0, 90, 180, or 270 degrees
+            'dither': True,    # Better handling of images
+            'compression': True # ZPL compression
         }
         self.options = {**self.default_options, **(options or {})}
-        self.dpmm = self.options['density']
-        self.dpi = self.dpmm * 25.4
+        self.pdf_converter = PDFtoZPL(
+            label_width=self.options['label_width'],
+            label_height=self.options['label_height'],
+            dpmm=self.options['density'],
+            rotate=self.options['rotation'],
+            dither=self.options['dither'],
+            compression=self.options['compression']
+        )
 
-    def pixels_to_dots(self, pixels: float) -> int:
-        """Convert pixels to printer dots based on density."""
-        return round((pixels / 96) * self.dpi)
+    def html_to_zpl(self, html_content: str) -> str:
+        """Convert HTML content to ZPL format"""
+        zpl = ['^XA']  # Start ZPL format
+        current_y = self.options['start_y']
+        
+        # Parse HTML
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Process text elements
+        for element in soup.find_all(text=True):
+            if element.strip():
+                parent = element.parent
+                font_size = self._get_font_size(parent)
+                is_bold = self._is_bold(parent)
+                
+                # Add text field
+                zpl.extend([
+                    f'^FO{self.options["start_x"]},{current_y}',
+                    f'^A0,{font_size}',
+                    '^FB' if is_bold else '',
+                    f'^FD{self.escape_zpl(element.string.strip())}^FS'
+                ])
+                
+                current_y += int(font_size * 1.5)
+        
+        zpl.append('^XZ')
+        return '\n'.join(filter(None, zpl))
+
+    def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
+        """Convert PDF to ZPL format with full layout preservation"""
+        try:
+            # Create a temporary directory if it doesn't exist
+            temp_dir = '/tmp'
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+            
+            temp_path = os.path.join(temp_dir, 'temp.pdf')
+            
+            # Handle different input types
+            if isinstance(pdf_data, str):
+                return self.pdf_converter.convert(pdf_data)
+            else:
+                # For bytes or BytesIO, save to temporary file
+                if isinstance(pdf_data, BytesIO):
+                    pdf_data = pdf_data.getvalue()
+                
+                with open(temp_path, 'wb') as f:
+                    f.write(pdf_data)
+                
+                try:
+                    zpl = self.pdf_converter.convert(temp_path)
+                finally:
+                    # Clean up
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                
+                return zpl
+                
+        except Exception as e:
+            raise Exception(f"Error converting PDF to ZPL: {str(e)}")
+
+    def add_barcode(self, data: str, barcode_type: str = "CODE128", x: Optional[int] = None, y: Optional[int] = None) -> str:
+        """Generate ZPL barcode"""
+        x = x if x is not None else self.options['start_x']
+        y = y if y is not None else self.options['start_y']
+        
+        barcode_commands = {
+            'CODE128': '^BC',
+            'CODE39': '^B3',
+            'QR': '^BQ',
+            'EAN13': '^BE',
+            'UPC': '^BU',
+            'DATAMATRIX': '^BX'
+        }
+        
+        command = barcode_commands.get(barcode_type.upper(), '^BC')
+        
+        return f'^XA\n^FO{x},{y}\n{command}\n^FD{self.escape_zpl(data)}^FS\n^XZ'
+
+    def _get_font_size(self, element) -> int:
+        """Get font size based on HTML element"""
+        base_size = self.options['font_size']
+        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            heading_level = int(element.name[1])
+            return int(base_size * (2.5 - (heading_level * 0.2)))
+        return base_size
+
+    def _is_bold(self, element) -> bool:
+        """Check if element should be bold"""
+        return element.name in ['strong', 'b'] or 'font-weight: bold' in element.get('style', '')
 
     def escape_zpl(self, text: str) -> str:
-        """Escape special characters in ZPL."""
+        """Escape special characters in ZPL"""
         text = html.unescape(text)
         escapes = {
             '\\': '\\\\',
@@ -57,111 +152,6 @@ class DocumentToZPL:
         for char, escape in escapes.items():
             text = text.replace(char, escape)
         return text
-
-    def html_to_zpl(self, html_content: str) -> str:
-        """Convert HTML content to ZPL format."""
-        zpl = ['^XA']  # Start ZPL format
-        current_y = self.options['start_y']
-        
-        # Parse HTML
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Process text elements
-        for element in soup.find_all(text=True):
-            if element.strip():
-                # Get parent tag for styling
-                parent = element.parent
-                
-                # Determine font size based on tag
-                font_size = self.options['font_size']
-                if parent.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                    # Scale font size based on heading level
-                    heading_level = int(parent.name[1])
-                    font_size = int(font_size * (2.0 - (heading_level * 0.2)))
-                
-                # Convert font size to dots
-                font_size_dots = self.pixels_to_dots(font_size)
-                
-                # Determine if bold
-                is_bold = parent.name in ['strong', 'b'] or parent.get('style', '').find('font-weight: bold') != -1
-                
-                # Add text field
-                zpl.extend([
-                    f'^FO{self.options["start_x"]},{current_y}',  # Field Origin
-                    f'^A0,{font_size_dots}',  # Font selection
-                    '^FB' if is_bold else '',  # Bold text if needed
-                    f'^FD{self.escape_zpl(element.string.strip())}^FS'  # Field Data and Separator
-                ])
-                
-                # Update vertical position
-                current_y += int(font_size_dots * 1.5)  # Add line spacing
-        
-        zpl.append('^XZ')  # End ZPL format
-        return '\n'.join(filter(None, zpl))
-
-    def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
-        """Convert PDF content to ZPL format."""
-        zpl = ['^XA']  # Start ZPL format
-        current_y = self.options['start_y']
-        
-        try:
-            # Handle different input types
-            if isinstance(pdf_data, str):
-                pdf_file = open(pdf_data, 'rb')
-            elif isinstance(pdf_data, bytes):
-                pdf_file = BytesIO(pdf_data)
-            elif isinstance(pdf_data, BytesIO):
-                pdf_file = pdf_data
-            else:
-                raise ValueError("Unsupported PDF input type")
-            
-            # Read PDF
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
-            
-            # Process each page
-            for page in pdf_reader.pages:
-                # Extract text
-                text = page.extract_text()
-                
-                # Process each line
-                for line in text.split('\n'):
-                    if line.strip():
-                        # Add text field with default font size
-                        font_size_dots = self.pixels_to_dots(self.options['font_size'])
-                        zpl.extend([
-                            f'^FO{self.options["start_x"]},{current_y}',  # Field Origin
-                            f'^A0,{font_size_dots}',  # Font selection
-                            f'^FD{self.escape_zpl(line.strip())}^FS'  # Field Data and Separator
-                        ])
-                        
-                        # Update vertical position
-                        current_y += int(font_size_dots * 1.5)  # Add line spacing
-            
-            if isinstance(pdf_data, str):
-                pdf_file.close()
-                
-        except Exception as e:
-            raise Exception(f"Error converting PDF to ZPL: {str(e)}")
-        
-        zpl.append('^XZ')  # End ZPL format
-        return '\n'.join(filter(None, zpl))
-
-    def add_barcode(self, data: str, barcode_type: str = "CODE128", x: Optional[int] = None, y: Optional[int] = None) -> str:
-        """Generate ZPL barcode."""
-        x = x if x is not None else self.options['start_x']
-        y = y if y is not None else self.options['start_y']
-        
-        barcode_commands = {
-            'CODE128': '^BC',
-            'CODE39': '^B3',
-            'QR': '^BQ',
-            'EAN13': '^BE',
-            'UPC': '^BU'
-        }
-        
-        command = barcode_commands.get(barcode_type.upper(), '^BC')
-        
-        return f'^XA\n^FO{x},{y}\n{command}\n^FD{self.escape_zpl(data)}^FS\n^XZ'
 
 # FastAPI app initialization
 app = FastAPI(
@@ -269,7 +259,7 @@ async def convert_html(request: HTMLRequest):
 @app.post("/convert/pdf")
 async def convert_pdf(
     file: UploadFile = File(...),
-    options: str = Form(None)  # Changed from Body to Form, and type to str
+    options: str = Form(None)
 ):
     """Convert PDF to ZPL format"""
     try:

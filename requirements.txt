@@ -3,10 +3,8 @@ uvicorn==0.24.0
 gunicorn==21.2.0
 python-multipart==0.0.6
 beautifulsoup4==4.12.2
-PyPDF2==3.0.1
-pdfplumber==0.10.3
-pdf2image==1.17.0
-pytesseract==0.3.10
+pdf2zpl==1.1.0
+Pillow==10.0.0
 pydantic==2.5.2
 python-dotenv==1.0.0
 httptools==0.6.1
