@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Union
 import uvicorn
 from bs4 import BeautifulSoup
-from io import BytesIO, StringIO
+from io import BytesIO
 import html
 import logging
 from datetime import datetime
@@ -14,7 +14,7 @@ import json
 from PIL import Image
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextBox, LTText, LTChar, LTAnno
-from zpl2 import Label
+import zpl
 
 # Setup logging
 logging.basicConfig(
@@ -29,22 +29,20 @@ MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB de
 class DocumentToZPL:
     def __init__(self, options: Optional[Dict] = None):
         self.default_options = {
-            'label_width': 4,  # inches
-            'label_height': 6,  # inches
-            'density': 8,      # dots/mm (203 dpi)
-            'font_size': 10,
-            'start_x': 50,
-            'start_y': 50,
-            'rotation': 0,     # 0, 90, 180, or 270 degrees
+            'label_width': 100,  # mm
+            'label_height': 60,  # mm
+            'char_height': 10,   # Default character height
+            'char_width': 8,     # Default character width
+            'line_width': 60,    # Default line width
+            'justification': 'L'  # L, C, R for Left, Center, Right
         }
         self.options = {**self.default_options, **(options or {})}
-        self.dpmm = self.options['density']
-        self.dpi = self.dpmm * 25.4
-
+        
     def html_to_zpl(self, html_content: str) -> str:
         """Convert HTML content to ZPL format"""
-        zpl = Label(self.options['density'])
-        current_y = self.options['start_y']
+        # Create a new label with specified dimensions
+        label = zpl.Label(self.options['label_width'], self.options['label_height'])
+        current_height = 0
         
         # Parse HTML
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -53,23 +51,31 @@ class DocumentToZPL:
         for element in soup.find_all(text=True):
             if element.strip():
                 parent = element.parent
-                font_size = self._get_font_size(parent)
-                is_bold = self._is_bold(parent)
+                char_height, char_width = self._get_text_dimensions(parent)
+                justification = self._get_justification(parent)
                 
-                # Add text field
-                zpl.origin(self.options['start_x'], current_y)
-                zpl.write_text(element.string.strip(), font_size, is_bold)
+                # Add text to label
+                label.origin(0, current_height)
+                label.write_text(
+                    element.strip(),
+                    char_height=char_height,
+                    char_width=char_width,
+                    line_width=self.options['line_width'],
+                    justification=justification
+                )
+                label.endorigin()
                 
-                current_y += int(font_size * 1.5)
+                # Update height for next element
+                current_height += char_height + 2  # Add some spacing
         
-        return str(zpl)
+        return label.dumpZPL()
 
     def pdf_to_zpl(self, pdf_data: Union[str, bytes, BytesIO]) -> str:
         """Convert PDF to ZPL format with layout preservation"""
         try:
-            # Create a Label instance
-            label = Label(self.options['density'])
-            current_y = self.options['start_y']
+            # Create a new label
+            label = zpl.Label(self.options['label_width'], self.options['label_height'])
+            current_height = 0
             
             # Create a temporary file if needed
             if isinstance(pdf_data, (bytes, BytesIO)):
@@ -79,85 +85,90 @@ class DocumentToZPL:
 
             # Extract pages with layout
             for page_layout in extract_pages(temp_file):
-                max_y = 0
-                
-                # Process each element in the page
                 for element in page_layout:
                     if isinstance(element, LTTextBox):
-                        # Get text and its properties
                         text = element.get_text().strip()
                         if not text:
                             continue
-                            
-                        # Calculate position
-                        x = int(element.x0 * self.dpmm)
-                        y = int(element.y0 * self.dpmm)
+                        
+                        # Calculate relative position
+                        x_pos = int(element.x0 * self.options['label_width'] / page_layout.width)
+                        y_pos = current_height + int(element.y0 * self.options['label_height'] / page_layout.height)
                         
                         # Get font properties
-                        font_size = self.options['font_size']
-                        is_bold = False
-                        
-                        for text_line in element:
-                            if isinstance(text_line, LTText):
-                                for character in text_line:
-                                    if isinstance(character, LTChar):
-                                        font_name = character.fontname
-                                        font_size = int(character.size * self.dpmm)
-                                        is_bold = 'Bold' in font_name or 'bold' in font_name
-                                        break
+                        char_height = int(element.height * 10 / page_layout.height)
+                        char_width = int(char_height * 0.8)  # Approximate width
                         
                         # Add text to label
-                        label.origin(x + self.options['start_x'], y + self.options['start_y'])
-                        label.write_text(text, font_size, is_bold)
+                        label.origin(x_pos, y_pos)
+                        label.write_text(
+                            text,
+                            char_height=max(5, char_height),  # Ensure minimum size
+                            char_width=max(4, char_width),
+                            line_width=self.options['line_width']
+                        )
+                        label.endorigin()
                         
-                        # Update maximum y position
-                        max_y = max(max_y, y + self.options['start_y'] + font_size)
-                
-                # Add page separator if not the last page
-                if max_y > current_y:
-                    current_y = max_y + self.pixels_to_dots(20)
+                        # Update height
+                        current_height = max(current_height, y_pos + char_height + 5)
             
-            return str(label)
+            return label.dumpZPL()
                 
         except Exception as e:
             raise Exception(f"Error converting PDF to ZPL: {str(e)}")
 
-    def add_barcode(self, data: str, barcode_type: str = "CODE128", x: Optional[int] = None, y: Optional[int] = None) -> str:
+    def add_barcode(self, data: str, barcode_type: str = "128", x: Optional[int] = None, y: Optional[int] = None) -> str:
         """Generate ZPL barcode"""
-        x = x if x is not None else self.options['start_x']
-        y = y if y is not None else self.options['start_y']
+        # Create a new label
+        label = zpl.Label(self.options['label_width'], self.options['label_height'])
         
-        label = Label(self.options['density'])
+        # Set position
+        x = x if x is not None else 10
+        y = y if y is not None else 10
+        
         label.origin(x, y)
         
-        if barcode_type.upper() == 'QR':
-            label.qr_code(data)
-        elif barcode_type.upper() == 'CODE39':
-            label.barcode('3', data)
-        elif barcode_type.upper() == 'EAN13':
-            label.barcode('E', data)
-        elif barcode_type.upper() == 'UPC':
-            label.barcode('U', data)
-        else:  # Default to CODE128
-            label.barcode('B', data)
+        # Map barcode types to zpl library format
+        barcode_types = {
+            'CODE128': '128',
+            'CODE39': '3',
+            'QR': 'Q',
+            'EAN13': 'E',
+            'UPC': 'U'
+        }
         
-        return str(label)
+        bc_type = barcode_types.get(barcode_type.upper(), '128')
+        
+        if bc_type == 'Q':  # QR Code
+            label.barcode(bc_type, data, magnification=5)
+        elif bc_type == 'U':  # UPC
+            label.barcode(bc_type, data, height=70, check_digit='Y')
+        else:  # Other barcodes
+            label.barcode(bc_type, data, height=60)
+            
+        label.endorigin()
+        
+        return label.dumpZPL()
 
-    def _get_font_size(self, element) -> int:
-        """Get font size based on HTML element"""
-        base_size = self.options['font_size']
+    def _get_text_dimensions(self, element) -> tuple:
+        """Get text dimensions based on HTML element"""
+        base_height = self.options['char_height']
+        base_width = self.options['char_width']
+        
         if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
             heading_level = int(element.name[1])
-            return int(base_size * (2.5 - (heading_level * 0.2)))
-        return base_size
+            multiplier = 2.5 - (heading_level * 0.3)
+            return (int(base_height * multiplier), int(base_width * multiplier))
+        return (base_height, base_width)
 
-    def _is_bold(self, element) -> bool:
-        """Check if element should be bold"""
-        return element.name in ['strong', 'b'] or 'font-weight: bold' in element.get('style', '')
-
-    def pixels_to_dots(self, pixels: float) -> int:
-        """Convert pixels to printer dots based on density."""
-        return round((pixels / 96) * self.dpi)
+    def _get_justification(self, element) -> str:
+        """Get text justification based on HTML element"""
+        style = element.get('style', '')
+        if 'text-align: center' in style:
+            return 'C'
+        elif 'text-align: right' in style:
+            return 'R'
+        return 'L'  # Default left alignment
 
 # FastAPI app initialization
 app = FastAPI(
@@ -180,12 +191,12 @@ app.add_middleware(
 )
 
 class ConversionOptions(BaseModel):
-    label_width: Optional[float] = Field(4.0, description="Label width in inches")
-    label_height: Optional[float] = Field(6.0, description="Label height in inches")
-    density: Optional[int] = Field(8, description="Printer density in dots/mm")
-    font_size: Optional[int] = Field(10, description="Default font size")
-    start_x: Optional[int] = Field(50, description="Starting X position")
-    start_y: Optional[int] = Field(50, description="Starting Y position")
+    label_width: Optional[float] = Field(100, description="Label width in mm")
+    label_height: Optional[float] = Field(60, description="Label height in mm")
+    char_height: Optional[int] = Field(10, description="Character height")
+    char_width: Optional[int] = Field(8, description="Character width")
+    line_width: Optional[int] = Field(60, description="Line width")
+    justification: Optional[str] = Field('L', description="Text justification (L, C, R)")
 
 class HTMLRequest(BaseModel):
     html_content: str = Field(..., description="HTML content to convert")
