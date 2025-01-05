@@ -48,6 +48,29 @@ class ConversionOptions(BaseModel):
     dpi: int = Field(72, gt=0, description="PDF DPI (PDF only)")
     split_pages: bool = Field(False, description="Split PDF pages (PDF only)")
 
+class HTMLOptions(BaseModel):
+    format: str = Field("ASCII", description="ZPL format type (ASCII, B64, or Z64)")
+    width: int = Field(400, gt=0, description="Width in pixels")
+    height: int = Field(300, gt=0, description="Height in pixels")
+    scale: float = Field(1.0, gt=0, description="Scaling factor")
+    invert: bool = Field(False, description="Invert black and white")
+
+class BarcodeOptions(BaseModel):
+    barcode_type: str = Field(..., description=f"Barcode type ({', '.join(SUPPORTED_BARCODE_TYPES)})")
+    data: str = Field(..., description="Data to encode in barcode")
+    width: Optional[int] = Field(2, gt=0, description="Barcode width")
+    height: Optional[int] = Field(100, gt=0, description="Barcode height")
+    show_text: Optional[bool] = Field(True, description="Show human-readable text")
+    rotation: Optional[int] = Field(0, ge=0, le=270, description="Rotation angle (0, 90, 180, 270)")
+
+class HTMLRequest(BaseModel):
+    html_content: str = Field(..., description="HTML content to convert")
+    options: Optional[HTMLOptions] = None
+
+class BarcodeRequest(BaseModel):
+    options: BarcodeOptions
+
+
 class Base64Request(BaseModel):
     file_content: str = Field(..., description="Base64 encoded file content")
     file_type: str = Field(..., description=f"File type ({', '.join(SUPPORTED_FILE_TYPES)})")
@@ -143,6 +166,65 @@ async def convert_file(file: UploadFile = File(...), options: str = Form(None)):
     except Exception as e:
         logger.error(f"Conversion failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/convert/html")
+async def convert_html(request: HTMLRequest):
+    """Convert HTML content to ZPL"""
+    logger.info("Received request to convert HTML to ZPL.")
+    try:
+        options = request.options or HTMLOptions()
+        
+        converter = ZebrafyHTML(
+            request.html_content,
+            width=options.width,
+            height=options.height,
+            scale=options.scale,
+            invert=not options.invert,  # Apply the same invert fix
+            format=options.format
+        )
+
+        zpl_output = converter.to_zpl()
+
+        return {
+            "status": "success",
+            "zpl_content": zpl_output,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"HTML conversion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate/barcode")
+async def generate_barcode(request: BarcodeRequest):
+    """Generate barcode in ZPL format"""
+    logger.info(f"Received request to generate {request.options.barcode_type} barcode.")
+    try:
+        if request.options.barcode_type.lower() not in SUPPORTED_BARCODE_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported barcode type. Supported types: {', '.join(SUPPORTED_BARCODE_TYPES)}"
+            )
+
+        converter = ZebrafyBarcode(
+            barcode_type=request.options.barcode_type,
+            data=request.options.data,
+            width=request.options.width,
+            height=request.options.height,
+            show_text=request.options.show_text,
+            rotation=request.options.rotation
+        )
+
+        zpl_output = converter.to_zpl()
+
+        return {
+            "status": "success",
+            "zpl_content": zpl_output,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Barcode generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
