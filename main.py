@@ -50,9 +50,6 @@ class ConversionOptions(BaseModel):
     height: int = Field(0, description="Output height (0 for original)")
     pos_x: int = Field(0, description="X position")
     pos_y: int = Field(0, description="Y position")
-    rotation: int = Field(0, description="Rotation (0, 90, 180, or 270)")
-    string_line_break: Optional[int] = Field(None, description="Characters per line")
-    complete_zpl: bool = Field(True, description="Include ZPL header/footer")
     dpi: int = Field(72, description="PDF DPI (PDF only)")
     split_pages: bool = Field(False, description="Split PDF pages (PDF only)")
 
@@ -61,20 +58,25 @@ class Base64Request(BaseModel):
     file_type: str = Field(..., description="File type (pdf or image)")
     options: Optional[ConversionOptions] = None
 
+VALID_ZEBRAFY_OPTIONS = {
+    'format',
+    'invert',
+    'dither',
+    'threshold',
+    'width',
+    'height',
+    'dpi',
+    'split_pages'
+}
+
 def clean_options(options: dict) -> dict:
-    """Remove None values and handle special parameters"""
+    """Remove unsupported parameters and None values"""
     if not options:
         return {}
     
-    # Remove None values and empty strings
-    cleaned = {k: v for k, v in options.items() if v is not None and v != ""}
-    
-    # Handle format conversion if present
-    if 'format' in cleaned:
-        # Store the format value
-        format_value = cleaned.pop('format')
-        # Add it back with the correct parameter name for Zebrafy
-        cleaned['format'] = format_value
+    # Only keep supported options and remove None values
+    cleaned = {k: v for k, v in options.items() 
+              if k in VALID_ZEBRAFY_OPTIONS and v is not None and v != ""}
     
     return cleaned
 
