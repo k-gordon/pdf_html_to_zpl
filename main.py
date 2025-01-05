@@ -46,13 +46,6 @@ class ConversionOptions(BaseModel):
     invert: bool = Field(False, description="Invert black and white")
     dither: bool = Field(True, description="Use dithering")
     threshold: int = Field(128, description="Black pixel threshold (0-255)")
-    width: int = Field(0, description="Output width (0 for original)")
-    height: int = Field(0, description="Output height (0 for original)")
-    pos_x: int = Field(0, description="X position")
-    pos_y: int = Field(0, description="Y position")
-    rotation: int = Field(0, description="Rotation (0, 90, 180, or 270)")
-    string_line_break: Optional[int] = Field(None, description="Characters per line")
-    complete_zpl: bool = Field(True, description="Include ZPL header/footer")
     dpi: int = Field(72, description="PDF DPI (PDF only)")
     split_pages: bool = Field(False, description="Split PDF pages (PDF only)")
 
@@ -60,53 +53,6 @@ class Base64Request(BaseModel):
     file_content: str = Field(..., description="Base64 encoded file content")
     file_type: str = Field(..., description="File type (pdf or image)")
     options: Optional[ConversionOptions] = None
-
-@app.middleware("http")
-async def check_file_size(request, call_next):
-    if request.method == "POST":
-        if "content-length" in request.headers:
-            content_length = int(request.headers["content-length"])
-            if content_length > MAX_UPLOAD_SIZE:
-                return JSONResponse(
-                    status_code=413,
-                    content={
-                        "status": "error",
-                        "message": f"File size exceeds maximum limit of {MAX_UPLOAD_SIZE/1024/1024}MB",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
-    response = await call_next(request)
-    return response
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    logger.error(f"Global error handler caught: {str(exc)}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "status": "error",
-            "message": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
-@app.get("/")
-async def root():
-    """Root endpoint with API information"""
-    return {
-        "name": "ZPL Converter API",
-        "version": "1.0.0",
-        "status": "active",
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat()
-    }
 
 @app.post("/convert/base64")
 async def convert_base64(request: Base64Request):
@@ -128,11 +74,6 @@ async def convert_base64(request: Base64Request):
                     invert=request.options.invert if request.options else False,
                     dither=request.options.dither if request.options else True,
                     threshold=request.options.threshold if request.options else 128,
-                    width=request.options.width if request.options else 0,
-                    height=request.options.height if request.options else 0,
-                    pos_x=request.options.pos_x if request.options else 0,
-                    pos_y=request.options.pos_y if request.options else 0,
-                    rotation=request.options.rotation if request.options else 0,
                     dpi=request.options.dpi if request.options else 72,
                     split_pages=request.options.split_pages if request.options else False
                 )
@@ -141,12 +82,7 @@ async def convert_base64(request: Base64Request):
                     file_content,
                     invert=request.options.invert if request.options else False,
                     dither=request.options.dither if request.options else True,
-                    threshold=request.options.threshold if request.options else 128,
-                    width=request.options.width if request.options else 0,
-                    height=request.options.height if request.options else 0,
-                    pos_x=request.options.pos_x if request.options else 0,
-                    pos_y=request.options.pos_y if request.options else 0,
-                    rotation=request.options.rotation if request.options else 0
+                    threshold=request.options.threshold if request.options else 128
                 )
             else:
                 raise HTTPException(status_code=400, detail="Unsupported file type")
@@ -203,11 +139,6 @@ async def convert_file(
                     invert=options_dict.get('invert', False),
                     dither=options_dict.get('dither', True),
                     threshold=options_dict.get('threshold', 128),
-                    width=options_dict.get('width', 0),
-                    height=options_dict.get('height', 0),
-                    pos_x=options_dict.get('pos_x', 0),
-                    pos_y=options_dict.get('pos_y', 0),
-                    rotation=options_dict.get('rotation', 0),
                     dpi=options_dict.get('dpi', 72),
                     split_pages=options_dict.get('split_pages', False)
                 )
@@ -216,12 +147,7 @@ async def convert_file(
                     contents,
                     invert=options_dict.get('invert', False),
                     dither=options_dict.get('dither', True),
-                    threshold=options_dict.get('threshold', 128),
-                    width=options_dict.get('width', 0),
-                    height=options_dict.get('height', 0),
-                    pos_x=options_dict.get('pos_x', 0),
-                    pos_y=options_dict.get('pos_y', 0),
-                    rotation=options_dict.get('rotation', 0)
+                    threshold=options_dict.get('threshold', 128)
                 )
                 
             zpl_format = options_dict.get('format', 'ASCII')
