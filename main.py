@@ -78,7 +78,8 @@ async def convert_base64(request: Base64Request):
                 dither=options.dither,
                 threshold=options.threshold,
                 dpi=options.dpi,
-                split_pages=options.split_pages
+                split_pages=options.split_pages,
+                format=options.format
             )
         else:
             converter = ZebrafyImage(
@@ -88,7 +89,7 @@ async def convert_base64(request: Base64Request):
                 threshold=options.threshold
             )
 
-        zpl_output = converter.to_zpl(format=options.format)
+        zpl_output = converter.to_zpl()
 
         return {"status": "success", "zpl_content": zpl_output, "timestamp": datetime.now().isoformat()}
     except Exception as e:
@@ -122,7 +123,8 @@ async def convert_file(file: UploadFile = File(...), options: str = Form(None)):
                 dither=options.dither,
                 threshold=options.threshold,
                 dpi=options.dpi,
-                split_pages=options.split_pages
+                split_pages=options.split_pages,
+                format=options.format
             )
         else:
             converter = ZebrafyImage(
@@ -132,7 +134,7 @@ async def convert_file(file: UploadFile = File(...), options: str = Form(None)):
                 threshold=options.threshold
             )
 
-        zpl_output = converter.to_zpl(format=options.format)
+        zpl_output = converter.to_zpl()
 
         return {"status": "success", "zpl_content": zpl_output, "timestamp": datetime.now().isoformat()}
     except json.JSONDecodeError:
