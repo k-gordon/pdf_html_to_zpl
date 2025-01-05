@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 import uvicorn
 import logging
 from datetime import datetime
@@ -29,7 +29,7 @@ SUPPORTED_FILE_TYPES = ["pdf", "png", "jpg", "jpeg", "html"]
 # FastAPI app initialization
 app = FastAPI(
     title="ZPL Converter API",
-    description="API for converting PDF, images, and HTML to ZPL format",
+    description="API for converting PDF, images and HTML to ZPL format",
     version="1.1.0"
 )
 
@@ -91,11 +91,15 @@ class HTMLToZPL:
         try:
             # Create a temporary file for the PDF
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+                # Set path to wkhtmltopdf binary
+                config = pdfkit.configuration(wkhtmltopdf='./bin/wkhtmltopdf')
+                
                 # Convert HTML to PDF
                 pdfkit.from_string(
                     self.html_content,
                     tmp_pdf.name,
-                    options=self.options
+                    options=self.options,
+                    configuration=config
                 )
                 
                 # Read the PDF file
