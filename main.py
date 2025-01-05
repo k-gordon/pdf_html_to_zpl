@@ -23,6 +23,21 @@ MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 10 * 1024 * 1024))  # 10MB de
 
 # Supported file types
 SUPPORTED_FILE_TYPES = ["pdf", "png", "jpg", "jpeg"]
+# Supported barcode types - make sure these match your Zebrafy library capabilities
+SUPPORTED_BARCODE_TYPES = [
+    "code128",
+    "code39", 
+    "code93",
+    "codabar",
+    "ean8",
+    "ean13",
+    "upca",
+    "upce",
+    "qr",
+    "datamatrix",
+    "interleaved2of5",
+    "industrial2of5"
+]
 
 # FastAPI app initialization
 app = FastAPI(
