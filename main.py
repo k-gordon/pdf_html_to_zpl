@@ -61,6 +61,23 @@ class Base64Request(BaseModel):
     file_type: str = Field(..., description="File type (pdf or image)")
     options: Optional[ConversionOptions] = None
 
+def clean_options(options: dict) -> dict:
+    """Remove None values and handle special parameters"""
+    if not options:
+        return {}
+    
+    # Remove None values and empty strings
+    cleaned = {k: v for k, v in options.items() if v is not None and v != ""}
+    
+    # Handle format conversion if present
+    if 'format' in cleaned:
+        # Store the format value
+        format_value = cleaned.pop('format')
+        # Add it back with the correct parameter name for Zebrafy
+        cleaned['format'] = format_value
+    
+    return cleaned
+
 @app.middleware("http")
 async def check_file_size(request, call_next):
     if request.method == "POST":
@@ -121,7 +138,8 @@ async def convert_base64(request: Base64Request):
             raise HTTPException(status_code=400, detail="Invalid base64 content")
             
         # Prepare options
-        options = request.options.dict() if request.options else {}
+        options = clean_options(request.options.dict()) if request.options else {}
+        logger.info(f"Using conversion options: {options}")
         
         # Convert based on file type
         if request.file_type.lower() == 'pdf':
@@ -165,6 +183,8 @@ async def convert_file(
         if options:
             try:
                 conv_options = json.loads(options)
+                conv_options = clean_options(conv_options)
+                logger.info(f"Using conversion options: {conv_options}")
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid options format")
             
