@@ -74,7 +74,7 @@ async def convert_base64(request: Base64Request):
         if request.file_type.lower() == "pdf":
             converter = ZebrafyPDF(
                 file_content,
-                invert=options.invert,
+                invert= not options.invert,
                 dither=options.dither,
                 threshold=options.threshold,
                 dpi=options.dpi,
@@ -84,7 +84,7 @@ async def convert_base64(request: Base64Request):
         else:
             converter = ZebrafyImage(
                 file_content,
-                invert=options.invert,
+                invert= not options.invert,
                 dither=options.dither,
                 threshold=options.threshold
             )
@@ -119,7 +119,7 @@ async def convert_file(file: UploadFile = File(...), options: str = Form(None)):
         if file_ext == "pdf":
             converter = ZebrafyPDF(
                 contents,
-                invert=options.invert,
+                invert= not options.invert,
                 dither=options.dither,
                 threshold=options.threshold,
                 dpi=options.dpi,
@@ -129,7 +129,7 @@ async def convert_file(file: UploadFile = File(...), options: str = Form(None)):
         else:
             converter = ZebrafyImage(
                 contents,
-                invert=options.invert,
+                invert= not options.invert,
                 dither=options.dither,
                 threshold=options.threshold
             )
