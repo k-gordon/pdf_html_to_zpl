@@ -32,8 +32,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://*.render.com",  # Allow Render domains
-        "http://localhost:3000",  # Local development
+        "https://*.render.com",  
+        "http://localhost:3000",  
         "http://localhost:8000",
     ],
     allow_credentials=True,
@@ -50,6 +50,9 @@ class ConversionOptions(BaseModel):
     height: int = Field(0, description="Output height (0 for original)")
     pos_x: int = Field(0, description="X position")
     pos_y: int = Field(0, description="Y position")
+    rotation: int = Field(0, description="Rotation (0, 90, 180, or 270)")
+    string_line_break: Optional[int] = Field(None, description="Characters per line")
+    complete_zpl: bool = Field(True, description="Include ZPL header/footer")
     dpi: int = Field(72, description="PDF DPI (PDF only)")
     split_pages: bool = Field(False, description="Split PDF pages (PDF only)")
 
@@ -57,28 +60,6 @@ class Base64Request(BaseModel):
     file_content: str = Field(..., description="Base64 encoded file content")
     file_type: str = Field(..., description="File type (pdf or image)")
     options: Optional[ConversionOptions] = None
-
-VALID_ZEBRAFY_OPTIONS = {
-    'format',
-    'invert',
-    'dither',
-    'threshold',
-    'width',
-    'height',
-    'dpi',
-    'split_pages'
-}
-
-def clean_options(options: dict) -> dict:
-    """Remove unsupported parameters and None values"""
-    if not options:
-        return {}
-    
-    # Only keep supported options and remove None values
-    cleaned = {k: v for k, v in options.items() 
-              if k in VALID_ZEBRAFY_OPTIONS and v is not None and v != ""}
-    
-    return cleaned
 
 @app.middleware("http")
 async def check_file_size(request, call_next):
@@ -139,25 +120,49 @@ async def convert_base64(request: Base64Request):
         except Exception as e:
             raise HTTPException(status_code=400, detail="Invalid base64 content")
             
-        # Prepare options
-        options = clean_options(request.options.dict()) if request.options else {}
-        logger.info(f"Using conversion options: {options}")
-        
         # Convert based on file type
-        if request.file_type.lower() == 'pdf':
-            converter = ZebrafyPDF(file_content, **options)
-        elif request.file_type.lower() in ['image', 'png', 'jpg', 'jpeg']:
-            converter = ZebrafyImage(file_content, **options)
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
+        try:
+            if request.file_type.lower() == 'pdf':
+                converter = ZebrafyPDF(
+                    file_content,
+                    invert=request.options.invert if request.options else False,
+                    dither=request.options.dither if request.options else True,
+                    threshold=request.options.threshold if request.options else 128,
+                    width=request.options.width if request.options else 0,
+                    height=request.options.height if request.options else 0,
+                    pos_x=request.options.pos_x if request.options else 0,
+                    pos_y=request.options.pos_y if request.options else 0,
+                    rotation=request.options.rotation if request.options else 0,
+                    dpi=request.options.dpi if request.options else 72,
+                    split_pages=request.options.split_pages if request.options else False
+                )
+            elif request.file_type.lower() in ['image', 'png', 'jpg', 'jpeg']:
+                converter = ZebrafyImage(
+                    file_content,
+                    invert=request.options.invert if request.options else False,
+                    dither=request.options.dither if request.options else True,
+                    threshold=request.options.threshold if request.options else 128,
+                    width=request.options.width if request.options else 0,
+                    height=request.options.height if request.options else 0,
+                    pos_x=request.options.pos_x if request.options else 0,
+                    pos_y=request.options.pos_y if request.options else 0,
+                    rotation=request.options.rotation if request.options else 0
+                )
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported file type")
+                
+            zpl_format = request.options.format if request.options else "ASCII"
+            zpl_output = converter.to_zpl(format=zpl_format)
             
-        zpl_output = converter.to_zpl()
-        
-        return {
-            "status": "success",
-            "zpl_content": zpl_output,
-            "timestamp": datetime.now().isoformat()
-        }
+            return {
+                "status": "success",
+                "zpl_content": zpl_output,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Conversion error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+            
     except Exception as e:
         logger.error(f"Error in conversion: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -181,32 +186,61 @@ async def convert_file(
             raise HTTPException(status_code=413, detail="File too large")
         
         # Parse options if provided
-        conv_options = {}
         if options:
             try:
-                conv_options = json.loads(options)
-                conv_options = clean_options(conv_options)
-                logger.info(f"Using conversion options: {conv_options}")
+                options_dict = json.loads(options)
+                logger.info(f"Using conversion options: {options_dict}")
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid options format")
+        else:
+            options_dict = {}
             
         # Convert based on file type
-        if file_ext == 'pdf':
-            converter = ZebrafyPDF(contents, **conv_options)
-        else:
-            converter = ZebrafyImage(contents, **conv_options)
+        try:
+            if file_ext == 'pdf':
+                converter = ZebrafyPDF(
+                    contents,
+                    invert=options_dict.get('invert', False),
+                    dither=options_dict.get('dither', True),
+                    threshold=options_dict.get('threshold', 128),
+                    width=options_dict.get('width', 0),
+                    height=options_dict.get('height', 0),
+                    pos_x=options_dict.get('pos_x', 0),
+                    pos_y=options_dict.get('pos_y', 0),
+                    rotation=options_dict.get('rotation', 0),
+                    dpi=options_dict.get('dpi', 72),
+                    split_pages=options_dict.get('split_pages', False)
+                )
+            else:
+                converter = ZebrafyImage(
+                    contents,
+                    invert=options_dict.get('invert', False),
+                    dither=options_dict.get('dither', True),
+                    threshold=options_dict.get('threshold', 128),
+                    width=options_dict.get('width', 0),
+                    height=options_dict.get('height', 0),
+                    pos_x=options_dict.get('pos_x', 0),
+                    pos_y=options_dict.get('pos_y', 0),
+                    rotation=options_dict.get('rotation', 0)
+                )
+                
+            zpl_format = options_dict.get('format', 'ASCII')
+            zpl_output = converter.to_zpl(format=zpl_format)
             
-        zpl_output = converter.to_zpl()
-        
-        return {
-            "status": "success",
-            "zpl_content": zpl_output,
-            "timestamp": datetime.now().isoformat()
-        }
+            return {
+                "status": "success",
+                "zpl_content": zpl_output,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Conversion error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+            
     except Exception as e:
         logger.error(f"Error in conversion: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    print(f"Starting server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
