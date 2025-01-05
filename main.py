@@ -70,11 +70,24 @@ async def convert_base64(request: Base64Request):
 
         # Perform the conversion
         options = request.options or ConversionOptions()
-        converter = (
-            ZebrafyPDF(file_content, invert=options.invert, dither=options.dither, threshold=options.threshold, dpi=options.dpi, split_pages=options.split_pages)
-            if request.file_type.lower() == "pdf"
-            else ZebrafyImage(file_content, invert=options.invert, dither=options.dither, threshold=options.threshold)
-        )
+
+        if request.file_type.lower() == "pdf":
+            converter = ZebrafyPDF(
+                file_content,
+                invert=options.invert,
+                dither=options.dither,
+                threshold=options.threshold,
+                dpi=options.dpi,
+                split_pages=options.split_pages
+            )
+        else:
+            converter = ZebrafyImage(
+                file_content,
+                invert=options.invert,
+                dither=options.dither,
+                threshold=options.threshold
+            )
+
         zpl_output = converter.to_zpl(format=options.format)
 
         return {"status": "success", "zpl_content": zpl_output, "timestamp": datetime.now().isoformat()}
@@ -102,11 +115,23 @@ async def convert_file(file: UploadFile = File(...), options: str = Form(None)):
         options = ConversionOptions(**options_dict)
 
         # Perform the conversion
-        converter = (
-            ZebrafyPDF(contents, invert=options.invert, dither=options.dither, threshold=options.threshold, dpi=options.dpi, split_pages=options.split_pages)
-            if file_ext == "pdf"
-            else ZebrafyImage(contents, invert=options.invert, dither=options.dither, threshold=options.threshold)
-        )
+        if file_ext == "pdf":
+            converter = ZebrafyPDF(
+                contents,
+                invert=options.invert,
+                dither=options.dither,
+                threshold=options.threshold,
+                dpi=options.dpi,
+                split_pages=options.split_pages
+            )
+        else:
+            converter = ZebrafyImage(
+                contents,
+                invert=options.invert,
+                dither=options.dither,
+                threshold=options.threshold
+            )
+
         zpl_output = converter.to_zpl(format=options.format)
 
         return {"status": "success", "zpl_content": zpl_output, "timestamp": datetime.now().isoformat()}
