@@ -11,5 +11,5 @@ bcrypt==4.0.1
 pillow==10.1.0
 pdfkit==1.0.0
 cryptography==41.0.5
-wkhtmltopdf-pack==0.12.6
+wkhtmltopdf-pack==0.12.2.1
 aiofiles==23.2.1
