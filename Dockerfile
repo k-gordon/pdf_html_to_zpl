@@ -3,8 +3,12 @@ FROM ubuntu:20.04
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Python and system dependencies
+# Install system dependencies and Python
 RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y \
     python3.9 \
     python3-pip \
     python3.9-venv \
