@@ -52,8 +52,8 @@ class ConversionOptions(BaseModel):
 
 class HTMLOptions(BaseModel):
     format: str = Field("ASCII", description="ZPL format type (ASCII, B64, or Z64)")
-    width: int = Field(400, gt=0, description="Width in pixels")
-    height: int = Field(300, gt=0, description="Height in pixels")
+    width: float = Field(4.0, gt=0, description="Width in inches")
+    height: float = Field(6.0, gt=0, description="Height in inches")
     scale: float = Field(1.0, gt=0, description="Scaling factor")
     invert: bool = Field(False, description="Invert black and white")
     dpi: int = Field(203, gt=0, description="DPI for conversion (default: 203 for Zebra printers)")
@@ -68,16 +68,23 @@ class HTMLRequest(BaseModel):
     options: Optional[HTMLOptions] = None
 
 class HTMLToZPL:
-    def __init__(self, html_content, width=400, height=300, scale=1.0, format="ASCII", invert=False, dpi=203):
+    def __init__(self, html_content, width=4.0, height=6.0, scale=1.0, format="ASCII", invert=False, dpi=203):
         self.html_content = html_content
-        # Convert pixels to mm, then apply scale
-        width_mm = (width / 3.7795275591) * scale
-        height_mm = (height / 3.7795275591) * scale
-        self.width_mm = width_mm
-        self.height_mm = height_mm
+        # Store original dimensions
+        self.width_inches = float(width)
+        self.height_inches = float(height)
+        self.scale = float(scale)
         self.format = format
         self.invert = invert
-        self.dpi = dpi
+        self.dpi = int(dpi)
+        
+        # Calculate dimensions in dots
+        self.width_dots = int(self.width_inches * self.dpi)
+        self.height_dots = int(self.height_inches * self.dpi)
+        
+        # Convert to mm for wkhtmltopdf (1 inch = 25.4 mm)
+        self.width_mm = self.width_inches * 25.4
+        self.height_mm = self.height_inches * 25.4
         
         # wkhtmltopdf options
         self.options = {
@@ -92,13 +99,39 @@ class HTMLToZPL:
             'dpi': str(self.dpi)
         }
 
+        # Add HTML wrapper with size constraints
+        self.html_content = f"""
+        <html>
+        <head>
+            <style>
+                @page {{
+                    size: {self.width_mm}mm {self.height_mm}mm;
+                    margin: 0;
+                }}
+                body {{
+                    margin: 0;
+                    padding: 0;
+                    width: {self.width_dots}px;
+                    height: {self.height_dots}px;
+                    overflow: hidden;
+                }}
+                * {{
+                    -webkit-print-color-adjust: exact;
+                }}
+            </style>
+        </head>
+        <body>
+            {html_content}
+        </body>
+        </html>
+        """
+
     def to_zpl(self):
         try:
             # Create a temporary file for the PDF
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
                 # Set path to wkhtmltopdf binary
                 config = pdfkit.configuration(wkhtmltopdf='/usr/bin/wkhtmltopdf')
-
                 
                 # Convert HTML to PDF
                 pdfkit.from_string(
@@ -112,20 +145,26 @@ class HTMLToZPL:
                 with open(tmp_pdf.name, 'rb') as pdf_file:
                     pdf_content = pdf_file.read()
                 
-                # Convert PDF to ZPL using existing ZebrafyPDF
+                # Convert PDF to ZPL using ZebrafyPDF
                 converter = ZebrafyPDF(
                     pdf_content,
-                    invert=not self.invert,  # Apply the invert fix
+                    invert=not self.invert,
                     dither=True,
                     threshold=128,
-                    dpi=203,  # Standard Zebra printer DPI
+                    dpi=self.dpi,
                     split_pages=False,
                     format=self.format
                 )
                 
                 zpl_output = converter.to_zpl()
                 
-                return zpl_output
+                # Modify ZPL output to include proper dimensions
+                zpl_lines = zpl_output.split('\n')
+                if zpl_lines[0] == '^XA':
+                    # Insert dimension commands after ^XA
+                    zpl_lines.insert(1, f'^PW{self.width_dots}^LL{self.height_dots}^LS0')
+                
+                return '\n'.join(zpl_lines)
                 
         except Exception as e:
             raise Exception(f"HTML to ZPL conversion failed: {str(e)}")
