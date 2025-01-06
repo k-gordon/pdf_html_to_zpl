@@ -68,25 +68,28 @@ class HTMLRequest(BaseModel):
     options: Optional[HTMLOptions] = None
 
 class HTMLToZPL:
-    def __init__(self, html_content, width=400, height=300, scale=1.0, format="ASCII", invert=False):
+    def __init__(self, html_content, width=400, height=300, scale=1.0, format="ASCII", invert=False, dpi=203):
         self.html_content = html_content
-        self.width = width/3.7795275591
-        self.height = height/3.7795275591
-        self.scale = scale
+        # Convert pixels to mm, then apply scale
+        width_mm = (width / 3.7795275591) * scale
+        height_mm = (height / 3.7795275591) * scale
+        self.width_mm = width_mm
+        self.height_mm = height_mm
         self.format = format
         self.invert = invert
         self.dpi = dpi
         
         # wkhtmltopdf options
         self.options = {
-            'page-width': f'{width * scale}mm',
-            'page-height': f'{height * scale}mm',
+            'page-width': f'{self.width_mm}mm',
+            'page-height': f'{self.height_mm}mm',
             'margin-top': '0',
             'margin-right': '0',
             'margin-bottom': '0',
             'margin-left': '0',
             'disable-smart-shrinking': '',
-            'zoom': '1.0'
+            'zoom': '1.0',
+            'dpi': str(self.dpi)
         }
 
     def to_zpl(self):
