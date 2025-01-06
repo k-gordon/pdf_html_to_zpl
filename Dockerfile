@@ -1,13 +1,18 @@
-FROM python:3.9-slim-buster
+FROM ubuntu:20.04
 
-# Install system dependencies
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libssl1.1 \
-        libxrender1 \
-        fontconfig \
-        libjpeg62-turbo \
-        libxext6 \
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.9 \
+    python3-pip \
+    python3.9-venv \
+    libssl1.1 \
+    libxrender1 \
+    fontconfig \
+    libjpeg62-turbo \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -15,7 +20,7 @@ WORKDIR /app
 
 # Copy requirements and install Python packages
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
