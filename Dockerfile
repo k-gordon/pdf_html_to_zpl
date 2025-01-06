@@ -2,6 +2,7 @@ FROM ubuntu:20.04
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/usr/local/bin:${PATH}"
 
 # Install system dependencies and Python
 RUN apt-get update && apt-get install -y \
@@ -24,6 +25,9 @@ RUN apt-get update && apt-get install -y \
     && apt install -y ./wkhtmltox_0.12.6-1.focal_amd64.deb \
     && rm ./wkhtmltox_0.12.6-1.focal_amd64.deb \
     && rm -rf /var/lib/apt/lists/*
+
+# Debugging: Ensure wkhtmltopdf is installed and accessible
+RUN which wkhtmltopdf && wkhtmltopdf --version
 
 # Set working directory
 WORKDIR /app
