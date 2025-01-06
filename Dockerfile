@@ -1,26 +1,19 @@
-FROM ubuntu:20.04
+FROM python:3.9-slim-buster
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies and Python
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y \
-    python3.9 \
-    python3-pip \
-    python3.9-venv \
+    wkhtmltopdf \
+    xvfb \
     libssl1.1 \
     libxrender1 \
     fontconfig \
     libjpeg62 \
     libxext6 \
-    wget \
     xfonts-75dpi \
     xfonts-base \
-    wkhtmltopdf \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -28,7 +21,7 @@ WORKDIR /app
 
 # Copy requirements and install Python packages
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
