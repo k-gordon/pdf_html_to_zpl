@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     libssl1.1 \
     libxrender1 \
     fontconfig \
-    libjpeg62-turbo \
+    libjpeg-turbo8 \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
