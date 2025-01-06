@@ -92,7 +92,8 @@ class HTMLToZPL:
             # Create a temporary file for the PDF
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
                 # Set path to wkhtmltopdf binary
-                config = pdfkit.configuration(wkhtmltopdf='./bin/wkhtmltopdf')
+                config = pdfkit.configuration(wkhtmltopdf='/usr/local/bin/wkhtmltopdf')
+
                 
                 # Convert HTML to PDF
                 pdfkit.from_string(
