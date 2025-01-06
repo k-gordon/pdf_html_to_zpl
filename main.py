@@ -96,17 +96,31 @@ class HTMLToZPL:
             'margin-left': '0',
             'disable-smart-shrinking': '',
             'zoom': '1.0',
-            'dpi': str(self.dpi)
+            'dpi': str(self.dpi),
+            'quality': '100',
+            'image-quality': '100',
+            'image-dpi': str(self.dpi),
+            'encoding': 'utf-8',
+            'no-outline': None,
+            'disable-smart-shrinking': None,
+            'print-media-type': None
         }
 
         # Add HTML wrapper with size constraints
         self.html_content = f"""
         <html>
         <head>
+            <meta charset="UTF-8">
             <style>
                 @page {{
                     size: {self.width_mm}mm {self.height_mm}mm;
                     margin: 0;
+                }}
+                @font-face {{
+                    font-family: 'ZebraFont';
+                    src: local('Arial');
+                    font-weight: normal;
+                    font-style: normal;
                 }}
                 body {{
                     margin: 0;
@@ -114,9 +128,27 @@ class HTMLToZPL:
                     width: {self.width_dots}px;
                     height: {self.height_dots}px;
                     overflow: hidden;
+                    font-family: 'ZebraFont', Arial, sans-serif;
+                    -webkit-font-smoothing: antialiased;
+                    text-rendering: optimizeLegibility;
+                }}
+                h1 {{
+                    font-size: {int(self.dpi/3)}px;
+                    font-weight: bold;
+                    line-height: 1.2;
+                    margin: {int(self.dpi/10)}px 0;
+                    padding: 0;
+                    letter-spacing: 0.5px;
+                }}
+                p {{
+                    font-size: {int(self.dpi/4)}px;
+                    line-height: 1.4;
+                    margin: {int(self.dpi/12)}px 0;
+                    padding: 0;
                 }}
                 * {{
                     -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
                 }}
             </style>
         </head>
@@ -125,6 +157,56 @@ class HTMLToZPL:
         </body>
         </html>
         """
+
+    def to_zpl(self):
+        try:
+            # Create a temporary file for the PDF
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+                # Set path to wkhtmltopdf binary
+                config = pdfkit.configuration(wkhtmltopdf='/usr/bin/wkhtmltopdf')
+                
+                # Convert HTML to PDF
+                pdfkit.from_string(
+                    self.html_content,
+                    tmp_pdf.name,
+                    options=self.options,
+                    configuration=config
+                )
+                
+                # Read the PDF file
+                with open(tmp_pdf.name, 'rb') as pdf_file:
+                    pdf_content = pdf_file.read()
+                
+                # Convert PDF to ZPL using ZebrafyPDF
+                converter = ZebrafyPDF(
+                    pdf_content,
+                    invert=not self.invert,
+                    dither=True,
+                    threshold=128,
+                    dpi=self.dpi,
+                    split_pages=False,
+                    format=self.format
+                )
+                
+                zpl_output = converter.to_zpl()
+                
+                # Modify ZPL output to include proper dimensions
+                zpl_lines = zpl_output.split('\n')
+                if zpl_lines[0] == '^XA':
+                    # Insert dimension commands after ^XA
+                    zpl_lines.insert(1, f'^PW{self.width_dots}^LL{self.height_dots}^LS0')
+                
+                return '\n'.join(zpl_lines)
+                
+        except Exception as e:
+            raise Exception(f"HTML to ZPL conversion failed: {str(e)}")
+            
+        finally:
+            # Cleanup temporary file
+            try:
+                os.unlink(tmp_pdf.name)
+            except:
+                pass
 
     def to_zpl(self):
         try:
