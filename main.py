@@ -86,7 +86,7 @@ class HTMLToZPL:
         self.width_mm = self.width_inches * 25.4
         self.height_mm = self.height_inches * 25.4
         
-        # wkhtmltopdf options - using only supported options
+        # wkhtmltopdf options
         self.options = {
             'page-width': f'{self.width_mm}mm',
             'page-height': f'{self.height_mm}mm',
@@ -94,7 +94,9 @@ class HTMLToZPL:
             'margin-right': '0',
             'margin-bottom': '0',
             'margin-left': '0',
-            'dpi': str(self.dpi)
+            'dpi': str(self.dpi),
+            'page-size': 'Custom',
+            'encoding': 'utf-8'
         }
 
         # Add HTML wrapper with size constraints
@@ -113,22 +115,28 @@ class HTMLToZPL:
                     width: {self.width_dots}px;
                     height: {self.height_dots}px;
                     overflow: hidden;
-                    font-family: Arial, Helvetica, sans-serif;
+                    font-family: "Liberation Sans", Arial, sans-serif;
+                    text-rendering: geometricPrecision;
+                    -webkit-font-smoothing: antialiased;
+                    -moz-osx-font-smoothing: grayscale;
+                    font-smooth: always;
                 }}
                 h1 {{
+                    font-size: {int(self.dpi/2.5)}px;
+                    font-weight: 700;
+                    line-height: 1;
+                    margin: {int(self.dpi/8)}px 0;
+                    padding: 0;
+                    text-align: center;
+                    font-feature-settings: "kern" 1;
+                }}
+                p {{
                     font-size: {int(self.dpi/3)}px;
-                    font-weight: 900;
                     line-height: 1.2;
                     margin: {int(self.dpi/10)}px 0;
                     padding: 0;
-                    letter-spacing: 1px;
-                }}
-                p {{
-                    font-size: {int(self.dpi/4)}px;
-                    line-height: 1.4;
-                    margin: {int(self.dpi/12)}px 0;
-                    padding: 0;
-                    font-weight: 500;
+                    text-align: center;
+                    font-feature-settings: "kern" 1;
                 }}
             </style>
         </head>
@@ -189,7 +197,6 @@ class HTMLToZPL:
                 os.unlink(tmp_pdf.name)
             except:
                 pass
-
 @app.post("/convert/base64")
 async def convert_base64(request: Base64Request):
     """Convert base64 encoded PDF or image to ZPL"""
