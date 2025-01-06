@@ -133,7 +133,7 @@ class HTMLToZPL:
     def to_zpl(self):
         try:
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
-                config = pdfkit.configuration(wkhtmltopdf='/usr/bin/wkhtmltopdf')
+                config = pdfkit.configuration(wkhtmltopdf='/usr/local/bin/wkhtmltopdf')
                 pdfkit.from_string(self.html_content, tmp_pdf.name, options=self.options, configuration=config)
 
                 with open(tmp_pdf.name, 'rb') as pdf_file:
