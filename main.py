@@ -56,6 +56,7 @@ class HTMLOptions(BaseModel):
     height: int = Field(300, gt=0, description="Height in pixels")
     scale: float = Field(1.0, gt=0, description="Scaling factor")
     invert: bool = Field(False, description="Invert black and white")
+    dpi: int = Field(203, gt=0, description="DPI for conversion (default: 203 for Zebra printers)")
 
 class Base64Request(BaseModel):
     file_content: str = Field(..., description="Base64 encoded file content")
@@ -69,11 +70,12 @@ class HTMLRequest(BaseModel):
 class HTMLToZPL:
     def __init__(self, html_content, width=400, height=300, scale=1.0, format="ASCII", invert=False):
         self.html_content = html_content
-        self.width = width
-        self.height = height
+        self.width = width/3.7795275591
+        self.height = height/3.7795275591
         self.scale = scale
         self.format = format
         self.invert = invert
+        self.dpi = dpi
         
         # wkhtmltopdf options
         self.options = {
@@ -236,7 +238,8 @@ async def convert_html(request: HTMLRequest):
             height=options.height,
             scale=options.scale,
             format=options.format,
-            invert=options.invert
+            invert=options.invert,
+            dpi=options.dpi
         )
 
         zpl_output = converter.to_zpl()
