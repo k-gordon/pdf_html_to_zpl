@@ -20,13 +20,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     xfonts-75dpi \
     xfonts-base \
+    wkhtmltopdf \
     && rm -rf /var/lib/apt/lists/*
-
-# Download and install wkhtmltopdf from official release
-RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.focal_amd64.deb \
-    && dpkg -i wkhtmltox_0.12.6.1-2.focal_amd64.deb || true \
-    && apt-get -f install -y \
-    && rm wkhtmltox_0.12.6.1-2.focal_amd64.deb
 
 # Set working directory
 WORKDIR /app
